@@ -216,7 +216,8 @@ export default {
                     throw new Error('No findings found in this audit.')
 
                 const counts = this.countSeverities(findings)
-                const severityUrl = this.buildSeverityPieDataUrl(audit.name || 'Finding Severity Distribution', '', counts)
+                const companyName = this.getCompanyName(audit)
+                const severityUrl = this.buildSeverityPieDataUrl(companyName || audit.name || 'Current audit', 'Findings Severity Chart', counts)
                 const matrix = this.getMatrixFindings(findings)
                 const matrixUrl = this.buildPriorityMatrixDataUrl('Action Priority Matrix', matrix.findings)
 
@@ -260,6 +261,20 @@ export default {
             const { default: AuditService } = await import('@/services/audit')
             const response = await AuditService.getAudit(this.auditId)
             return response.data.datas
+        },
+
+        getCompanyName: function(audit) {
+            const auditCompany = String(audit?.company?.name || '').trim()
+            if (auditCompany)
+                return auditCompany
+
+            const companyInput = document.querySelector('input[aria-label="Company"]')
+            const companyField = companyInput?.closest('.q-field__native')
+            const visibleCompany = String(companyField?.querySelector('span')?.textContent || '').trim()
+            if (visibleCompany)
+                return visibleCompany
+
+            return ''
         },
 
         emptyCounts: function() {
@@ -339,16 +354,16 @@ export default {
 
             const values = SEVERITY_ORDER.map(severity => counts[severity] || 0)
             const total = values.reduce((sum, value) => sum + value, 0)
-            const centerX = 350
-            const centerY = 290
-            const radius = 190
+            const centerX = canvas.width / 2
+            const centerY = 310
+            const radius = 175
 
             ctx.fillStyle = '#ffffff'
             ctx.fillRect(0, 0, canvas.width, canvas.height)
 
             if (title) {
                 ctx.fillStyle = '#111111'
-                ctx.font = 'bold 24px Arial'
+                ctx.font = 'bold 26px Arial'
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
                 ctx.fillText(title, canvas.width / 2, 42)
@@ -390,19 +405,24 @@ export default {
                 start = end
             })
 
-            const legendX = 620
-            const legendY = 190
-            const spacing = 44
-            ctx.font = 'bold 14px Arial'
+            const legendY = 555
+            const legendGap = 28
+            ctx.font = 'bold 13px Arial'
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
+            const legendItems = SEVERITY_ORDER.map(severity => ({
+                severity,
+                width: 18 + 10 + ctx.measureText(severity).width
+            }))
+            const totalLegendWidth = legendItems.reduce((sum, item) => sum + item.width, 0) + (legendItems.length - 1) * legendGap
+            let legendX = (canvas.width - totalLegendWidth) / 2
 
-            SEVERITY_ORDER.forEach((severity, index) => {
-                const y = legendY + index * spacing
+            legendItems.forEach(({ severity, width }) => {
                 ctx.fillStyle = SEVERITY_COLORS[severity]
-                ctx.fillRect(legendX, y - 9, 18, 18)
+                ctx.fillRect(legendX, legendY - 9, 18, 18)
                 ctx.fillStyle = '#111111'
-                ctx.fillText(severity, legendX + 28, y)
+                ctx.fillText(severity, legendX + 28, legendY)
+                legendX += width + legendGap
             })
 
             return canvas.toDataURL('image/png')
