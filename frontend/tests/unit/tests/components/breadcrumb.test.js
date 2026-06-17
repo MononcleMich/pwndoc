@@ -26,7 +26,6 @@ describe('Breadcrumb Component', () => {
         },
         stubs: {
           'audit-state-icon': true,
-          'audit-severity-chart-button': true,
           'q-bar': { template: '<div class="q-bar"><slot /></div>' },
           'q-btn': true,
           'q-separator': true,
@@ -144,7 +143,6 @@ describe('Breadcrumb Component', () => {
         },
         stubs: {
           'audit-state-icon': true,
-          'audit-severity-chart-button': true,
           'q-bar': { template: '<div class="q-bar"><slot /><slot name="buttons" /></div>' },
           'q-btn': true,
           'q-separator': true,
