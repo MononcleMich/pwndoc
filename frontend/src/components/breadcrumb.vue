@@ -22,12 +22,14 @@
             <draft-recovery-status />
         </div>
         <q-space />
+        <audit-severity-chart-button />
         <slot name="buttons"></slot>
     </q-bar>
 </template>
 
 <script>
 import AuditStateIcon from 'components/audit-state-icon';
+import AuditSeverityChartButton from 'components/audit-severity-chart-button.vue';
 import DraftRecoveryStatus from 'components/draft-recovery-status.vue';
 
 export default {
@@ -44,6 +46,7 @@ export default {
 
     components: {
         AuditStateIcon,
+        AuditSeverityChartButton,
         DraftRecoveryStatus
     },
 
