@@ -66,6 +66,7 @@
 
             <q-card-actions align="right" class="q-gutter-sm">
                 <q-btn color="primary" no-caps label="Insert into focused editor" @click="insertCurrentChart" />
+                <q-btn color="secondary" outline no-caps label="Copy PNG" @click="copyCurrentPng" />
                 <q-btn color="secondary" outline no-caps label="Copy HTML" @click="copyCurrentHtml" />
                 <q-btn color="secondary" outline no-caps label="Copy URL" @click="copyCurrentUrl" />
                 <q-btn
@@ -211,7 +212,9 @@ export default {
 
             try {
                 const audit = await this.getAuditForChart()
-                const findings = Array.isArray(audit.findings) ? audit.findings : []
+                const findings = Array.isArray(audit.findings)
+                    ? audit.findings.filter(finding => !this.isSummaryFinding(finding))
+                    : []
                 if (!findings.length)
                     throw new Error('No findings found in this audit.')
 
@@ -281,6 +284,10 @@ export default {
             return createEmptyCounts()
         },
 
+        isSummaryFinding: function(finding) {
+            return String(finding?.category || '').trim().toLowerCase() === 'summary'
+        },
+
         countSeverities: function(findings) {
             const counts = this.emptyCounts()
 
@@ -345,8 +352,8 @@ export default {
 
         buildSeverityPieDataUrl: function(title, subtitle, counts) {
             const canvas = document.createElement('canvas')
-            canvas.width = 900
-            canvas.height = 620
+            canvas.width = 520
+            canvas.height = 425
 
             const ctx = canvas.getContext('2d')
             if (!ctx)
@@ -355,8 +362,8 @@ export default {
             const values = SEVERITY_ORDER.map(severity => counts[severity] || 0)
             const total = values.reduce((sum, value) => sum + value, 0)
             const centerX = canvas.width / 2
-            const centerY = 310
-            const radius = 175
+            const centerY = 225
+            const radius = 148
 
             ctx.fillStyle = '#ffffff'
             ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -366,7 +373,7 @@ export default {
                 ctx.font = 'bold 26px Arial'
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
-                ctx.fillText(title, canvas.width / 2, 42)
+                ctx.fillText(title, canvas.width / 2, 24)
             }
 
             if (subtitle) {
@@ -374,7 +381,7 @@ export default {
                 ctx.font = 'bold 24px Arial'
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
-                ctx.fillText(subtitle, canvas.width / 2, 74)
+                ctx.fillText(subtitle, canvas.width / 2, 52)
             }
 
             let start = -Math.PI / 2
@@ -405,8 +412,8 @@ export default {
                 start = end
             })
 
-            const legendY = 555
-            const legendGap = 28
+            const legendY = 405
+            const legendGap = 14
             ctx.font = 'bold 13px Arial'
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
@@ -428,51 +435,58 @@ export default {
             return canvas.toDataURL('image/png')
         },
 
-        getCvssNumeric: function(finding) {
-            const cvss = this.getFindingCvssData(finding)
-            if (cvss.baseScore === null)
-                return null
-
-            return Math.max(1, Math.min(10, cvss.baseScore))
-        },
-
-        normalizeRangeToTen: function(value, min, max) {
-            if (!Number.isFinite(value))
-                return null
-
-            const normalized = 1 + ((value - min) * 9 / (max - min))
-            return Math.max(1, Math.min(10, normalized))
-        },
-
-        priorityToEffortPoint: function(value) {
+        priorityToBandPosition: function(value) {
             const label = String(value || '').toLowerCase()
-            if (label.includes('low'))
-                return 4
-            if (label.includes('medium') || label.includes('moderate'))
-                return 3
-            if (label.includes('high'))
-                return 2
             if (label.includes('urgent') || label.includes('critical'))
-                return 1
+                return 0.05
+            if (label.includes('high'))
+                return 0.32
+            if (label.includes('medium') || label.includes('moderate'))
+                return 0.68
+            if (label.includes('low'))
+                return 0.95
 
             const numericValue = Number(value)
             if (numericValue === 4)
-                return 1
+                return 0.05
             if (numericValue === 3)
-                return 2
+                return 0.32
             if (numericValue === 2)
-                return 3
+                return 0.68
             if (numericValue === 1)
-                return 4
+                return 0.95
 
-            return null
+            return 0.5
         },
 
-        getEffortPriorityScore: function(finding, remediationEffort) {
-            const priorityPoint = this.priorityToEffortPoint(finding.priority) || 2.5
-            const rawEffortScore = remediationEffort + priorityPoint
+        remapRange: function(value, sourceMinimum, sourceMaximum, targetMinimum, targetMaximum) {
+            const bounded = Math.max(sourceMinimum, Math.min(sourceMaximum, value))
+            const ratio = (bounded - sourceMinimum) / (sourceMaximum - sourceMinimum)
+            return targetMinimum + ratio * (targetMaximum - targetMinimum)
+        },
 
-            return Number(this.normalizeRangeToTen(rawEffortScore, 2, 7).toFixed(1))
+        getSeverityPlotScore: function(baseScore, severity) {
+            if (severity === 'Critical')
+                return this.remapRange(baseScore, 9, 10, 8.5, 10)
+            if (severity === 'High')
+                return this.remapRange(baseScore, 7, 8.9, 5.6, 8.4)
+            if (severity === 'Moderate')
+                return this.remapRange(baseScore, 4, 6.9, 3.5, 5.4)
+            if (severity === 'Low')
+                return this.remapRange(baseScore, 0.1, 3.9, 1.2, 3.4)
+            return 1
+        },
+
+        getEffortPlotScore: function(finding, difficulty, severity) {
+            const effectiveDifficulty = severity === 'Informational' ? Math.max(2, difficulty) : difficulty
+            const ranges = {
+                1: [1.2, 4.8],
+                2: [5.7, 7.5],
+                3: [7.8, 9.8]
+            }
+            const range = ranges[effectiveDifficulty] || ranges[2]
+            const position = this.priorityToBandPosition(finding.priority)
+            return range[0] + position * (range[1] - range[0])
         },
 
         remediationDifficultyToEffort: function(value) {
@@ -515,23 +529,9 @@ export default {
             return { effort: 2, defaulted: true }
         },
 
-        getShortLabel: function(finding, index) {
-            const title = String(finding.title || '').trim()
-            const prefixMatch = title.match(/\b([A-Z]{2,5}-\d+)\b/i)
-            if (prefixMatch)
-                return prefixMatch[1].toUpperCase()
-
-            const category = String(finding.category || '').toLowerCase()
-            let prefix = 'FIND'
-            if (category.startsWith('int'))
-                prefix = 'INT'
-            else if (category.startsWith('ext'))
-                prefix = 'EXT'
-            else if (category.startsWith('sum'))
-                prefix = 'SUM'
-
-            const identifier = Number.isFinite(Number(finding.identifier)) ? Number(finding.identifier) : (index + 1)
-            return `${prefix}-${identifier}`
+        getShortLabel: function(index) {
+            // PwnDoc persists its displayed category/CVSS order in audit.findings.
+            return `ID-${String(index + 1).padStart(3, '0')}`
         },
 
         getMatrixFindings: function(findings) {
@@ -540,11 +540,15 @@ export default {
                 const difficulty = this.getRemediationDifficulty(finding)
                 if (difficulty.defaulted)
                     defaultEffortCount += 1
+                const cvss = this.getFindingCvssData(finding)
+                const severity = this.normalizeSeverityLabel(cvss.baseSeverity) || 'Informational'
+                const baseScore = cvss.baseScore === null ? 0 : Math.max(0, Math.min(10, cvss.baseScore))
 
                 return {
-                    name: this.getShortLabel(finding, index),
-                    cvss: this.getCvssNumeric(finding) || 1.0,
-                    effort: this.getEffortPriorityScore(finding, difficulty.effort)
+                    name: this.getShortLabel(index),
+                    cvss: Number(this.getSeverityPlotScore(baseScore, severity).toFixed(1)),
+                    severity,
+                    effort: Number(this.getEffortPlotScore(finding, difficulty.effort, severity).toFixed(1))
                 }
             })
 
@@ -585,7 +589,7 @@ export default {
             return plot.y + plot.h - ((value - 1) / 9) * plot.h
         },
 
-        applyMatrixOffsets: function(points) {
+        applyMatrixOffsets: function(points, plot) {
             const byCell = new Map()
             points.forEach(point => {
                 const key = `${Math.round(point.finding.effort)}:${Math.round(point.finding.cvss)}`
@@ -598,11 +602,20 @@ export default {
                 if (group.length <= 1)
                     continue
 
-                const offsets = [[0, 0], [22, -16], [-22, 16], [22, 16], [-22, -16], [0, -28], [0, 28]]
                 group.forEach((point, index) => {
-                    const offset = offsets[index % offsets.length]
-                    point.x += offset[0]
-                    point.y += offset[1]
+                    if (index === 0)
+                        return
+
+                    const ring = Math.floor((index - 1) / 8) + 1
+                    const angle = ((index - 1) % 8) * Math.PI / 4
+                    const midX = this.valueToX(5.5, plot)
+                    const midY = this.valueToY(5.5, plot)
+                    const left = point.finding.effort < 5.5 ? plot.x + 8 : midX + 8
+                    const right = point.finding.effort < 5.5 ? midX - 8 : plot.x + plot.w - 8
+                    const top = point.finding.cvss >= 5.5 ? plot.y + 8 : midY + 8
+                    const bottom = point.finding.cvss >= 5.5 ? midY - 8 : plot.y + plot.h - 8
+                    point.x = Math.max(left, Math.min(right, point.x + Math.cos(angle) * ring * 16))
+                    point.y = Math.max(top, Math.min(bottom, point.y + Math.sin(angle) * ring * 10))
                 })
             }
         },
@@ -624,8 +637,8 @@ export default {
 
         buildPriorityMatrixDataUrl: function(title, findings) {
             const canvas = document.createElement('canvas')
-            canvas.width = 1200
-            canvas.height = 1000
+            canvas.width = 1040
+            canvas.height = 750
 
             const ctx = canvas.getContext('2d')
             if (!ctx)
@@ -635,18 +648,19 @@ export default {
             ctx.fillStyle = '#ffffff'
             ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-            const plot = { x: 220, y: 145, w: 760, h: 500 }
+            const plot = { x: 150, y: 92, w: 790, h: 500 }
             const midX = this.valueToX(5.5, plot)
             const midY = this.valueToY(5.5, plot)
-            const axisLeft = plot.x - 70
-            const axisBottom = plot.y + plot.h + 45
+            const axisLeft = plot.x - 54
+            const axisBottom = plot.y + plot.h + 24
+            const legendY = 716
 
             ctx.save()
             ctx.fillStyle = '#1f2937'
             ctx.font = 'bold 48px Arial'
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.fillText(title || 'Action Priority Matrix', canvas.width / 2, 70)
+            ctx.fillText(title || 'Action Priority Matrix', plot.x + plot.w / 2, 42)
             ctx.restore()
 
             ctx.save()
@@ -664,14 +678,15 @@ export default {
             ctx.lineTo(axisLeft + 14, plot.y - 20)
             ctx.closePath()
             ctx.fill()
+            ctx.lineWidth = 3
             ctx.beginPath()
             ctx.moveTo(axisLeft, axisBottom)
             ctx.lineTo(plot.x + plot.w + 55, axisBottom)
             ctx.stroke()
             ctx.beginPath()
-            ctx.moveTo(plot.x + plot.w + 75, axisBottom)
-            ctx.lineTo(plot.x + plot.w + 42, axisBottom - 15)
-            ctx.lineTo(plot.x + plot.w + 42, axisBottom + 15)
+            ctx.moveTo(plot.x + plot.w + 70, axisBottom)
+            ctx.lineTo(plot.x + plot.w + 44, axisBottom - 11)
+            ctx.lineTo(plot.x + plot.w + 44, axisBottom + 11)
             ctx.closePath()
             ctx.fill()
             ctx.restore()
@@ -681,7 +696,7 @@ export default {
             ctx.font = '30px Arial'
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.fillText('REMEDIATION EFFORT', plot.x + plot.w / 2, axisBottom + 52)
+            ctx.fillText('REMEDIATION EFFORT', plot.x + plot.w / 2, axisBottom + 34)
             ctx.translate(axisLeft - 54, plot.y + plot.h / 2)
             ctx.rotate(-Math.PI / 2)
             ctx.fillText('SEVERITY', 0, 0)
@@ -746,7 +761,7 @@ export default {
                 x: this.valueToX(finding.effort, plot),
                 y: this.valueToY(Math.max(1, Math.min(10, finding.cvss)), plot)
             }))
-            this.applyMatrixOffsets(points)
+            this.applyMatrixOffsets(points, plot)
 
             points.forEach(point => {
                 ctx.save()
@@ -757,30 +772,82 @@ export default {
                 ctx.restore()
             })
 
+            const labelBoxes = []
             points.forEach(point => {
                 const lines = this.wrapText(point.finding.name, 10)
-                let labelX = point.x
-                let labelY = point.y + 22
-                let align = 'center'
-                if (point.x < plot.x + 80) {
-                    labelX = point.x + 18
-                    align = 'left'
-                }
-                else if (point.x > plot.x + plot.w - 80) {
-                    labelX = point.x - 18
-                    align = 'right'
-                }
-                if (point.y > plot.y + plot.h - 60)
-                    labelY = point.y - 22
-
                 ctx.save()
-                ctx.fillStyle = 'rgba(17,24,39,0.78)'
-                ctx.font = 'bold 13px Arial'
-                ctx.textAlign = align
+                ctx.font = 'bold 9px Arial'
                 ctx.textBaseline = 'middle'
-                const lineHeight = 15
+                const lineHeight = 11
                 const totalHeight = (lines.length - 1) * lineHeight
-                lines.forEach((line, index) => ctx.fillText(line, labelX, labelY - totalHeight / 2 + index * lineHeight))
+                const textWidth = Math.max(...lines.map(line => ctx.measureText(line).width))
+                const textHeight = Math.max(lineHeight, lines.length * lineHeight)
+                const candidates = []
+                for (const radius of [16, 24, 32, 42, 54, 68]) {
+                    for (let step = 0; step < 16; step++) {
+                        const angle = (Math.PI * 2 * step / 16) + (Math.PI / 2)
+                        candidates.push({
+                            x: point.x + Math.cos(angle) * radius,
+                            y: point.y + Math.sin(angle) * radius,
+                            radius,
+                            align: 'center'
+                        })
+                    }
+                }
+                const positioned = candidates.map(candidate => {
+                    const left = candidate.x - textWidth / 2
+                    return {
+                        ...candidate,
+                        box: {
+                            left: left - 2,
+                            right: left + textWidth + 2,
+                            top: candidate.y - textHeight / 2 - 2,
+                            bottom: candidate.y + textHeight / 2 + 2
+                        }
+                    }
+                })
+                const overlaps = (first, second) => !(first.right < second.left || first.left > second.right || first.bottom < second.top || first.top > second.bottom)
+                const pointBoxes = points
+                .filter(other => other !== point)
+                .map(other => ({
+                    left: other.x - 8,
+                    right: other.x + 8,
+                    top: other.y - 8,
+                    bottom: other.y + 8
+                }))
+                const available = positioned.filter(candidate =>
+                    candidate.box.left >= plot.x &&
+                    candidate.box.right <= plot.x + plot.w &&
+                    candidate.box.top >= plot.y &&
+                    candidate.box.bottom <= plot.y + plot.h
+                )
+                const selected = available.find(candidate =>
+                    !labelBoxes.some(box => overlaps(candidate.box, box)) &&
+                    !pointBoxes.some(box => overlaps(candidate.box, box))
+                ) || available
+                .map(candidate => ({
+                    ...candidate,
+                    collisions: labelBoxes.filter(box => overlaps(candidate.box, box)).length + pointBoxes.filter(box => overlaps(candidate.box, box)).length
+                }))
+                .sort((first, second) => first.collisions - second.collisions || first.radius - second.radius)[0] || positioned[0]
+                labelBoxes.push(selected.box)
+
+                ctx.textAlign = selected.align
+                if (selected.radius > 18) {
+                    ctx.beginPath()
+                    ctx.moveTo(point.x, point.y)
+                    ctx.lineTo(selected.x, selected.y)
+                    ctx.strokeStyle = 'rgba(71,84,103,0.38)'
+                    ctx.lineWidth = 1
+                    ctx.stroke()
+                }
+                ctx.fillStyle = 'rgba(255,255,255,0.88)'
+                ctx.fillRect(selected.box.left, selected.box.top, selected.box.right - selected.box.left, selected.box.bottom - selected.box.top)
+                ctx.fillStyle = 'rgba(17,24,39,0.88)'
+                lines.forEach((line, index) => {
+                    const y = selected.y - totalHeight / 2 + index * lineHeight
+                    ctx.fillText(line, selected.x, y)
+                })
                 ctx.restore()
             })
 
@@ -789,12 +856,12 @@ export default {
             ctx.font = 'bold 19px Arial'
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
-            ctx.fillText('Priority Zones', 120, 850)
+            ctx.fillText('Priority Zones', 70, legendY)
             ctx.restore()
 
-            const legendX = 300
-            const spacing = 205
-            MATRIX_QUADS.forEach((quad, index) => this.drawLegendSquare(ctx, legendX + index * spacing, 850, quad.color, quad.name))
+            const legendX = 235
+            const spacing = 190
+            MATRIX_QUADS.forEach((quad, index) => this.drawLegendSquare(ctx, legendX + index * spacing, legendY, quad.color, quad.name))
 
             return canvas.toDataURL('image/png')
         },
@@ -881,6 +948,22 @@ export default {
                 textColor: 'white',
                 position: 'top-right'
             })
+        },
+
+        copyCurrentPng: async function() {
+            try {
+                const blob = await (await fetch(this.currentChart.chartUrl)).blob()
+                await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })])
+                Notify.create({
+                    message: 'Copied chart PNG.',
+                    color: 'positive',
+                    textColor: 'white',
+                    position: 'top-right'
+                })
+            }
+            catch (err) {
+                await this.copyText(this.currentChart.html, 'PNG clipboard was unavailable, so chart HTML was copied instead.')
+            }
         },
 
         copyCurrentHtml: function() {

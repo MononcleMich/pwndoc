@@ -53,3 +53,5 @@ coverage
 .claude/plan.md
 .playwright-mcp
 .playwright-cli
+demos/pwndoc-chart-bookmarklet.source.js
+demos/pwndoc-chart-bookmarklet.txt
